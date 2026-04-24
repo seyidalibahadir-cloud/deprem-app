@@ -8,47 +8,77 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      BUILD_TOOLS_VERSION: "33.0.2"
+      ANDROID_API: "33"
+      PYTHON_VERSION: "3.10"
+
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.10"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
 
-    - name: Install system dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y git zip unzip openjdk-17-jdk \
-          build-essential libffi-dev libssl-dev \
-          libsqlite3-dev libbz2-dev libreadline-dev liblzma-dev \
-          zlib1g-dev libncurses5-dev libncursesw5-dev
-        pip install --upgrade pip
-        pip install buildozer cython kivy kivymd requests
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git zip unzip openjdk-17-jdk \
+            build-essential libffi-dev libssl-dev \
+            libsqlite3-dev libbz2-dev libreadline-dev liblzma-dev \
+            zlib1g-dev libncurses5-dev libncursesw5-dev cmake
 
-    - name: Initialize Buildozer and download Android tools
-      run: |
-        buildozer init || true
-        buildozer android update
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install buildozer cython kivy kivymd requests
 
-    - name: Accept Android SDK licenses
-      run: |
-        mkdir -p ~/.android
-        touch ~/.android/repositories.cfg
-        SDKMANAGER=$(find ~/.buildozer/android/platform/android-sdk -name sdkmanager | head -n 1)
-        if [ -z "$SDKMANAGER" ]; then
-          echo "sdkmanager not found"
-          exit 1
-        fi
-        yes | "$SDKMANAGER" --licenses
+      - name: Prepare Buildozer
+        run: |
+          buildozer init || true
 
-    - name: Build APK
-      run: |
-        buildozer -v android debug
+      - name: Locate Android SDK tools
+        id: sdk
+        shell: bash
+        run: |
+          SDKMANAGER="$(find "$HOME/.buildozer/android/platform/android-sdk" -name sdkmanager | head -n 1)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found"
+            exit 1
+          fi
+          echo "sdkmanager=$SDKMANAGER" >> "$GITHUB_OUTPUT"
 
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: apk
-        path: bin/*.apk
+      - name: Accept existing Android SDK licenses
+        shell: bash
+        run: |
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          yes | "${{ steps.sdk.outputs.sdkmanager }}" --licenses || true
+
+      - name: Install required Android SDK packages
+        shell: bash
+        run: |
+          yes | "${{ steps.sdk.outputs.sdkmanager }}" \
+            "platform-tools" \
+            "platforms;android-${ANDROID_API}" \
+            "build-tools;${BUILD_TOOLS_VERSION}" \
+            || true
+
+      - name: Accept Android SDK licenses again
+        shell: bash
+        run: |
+          yes | "${{ steps.sdk.outputs.sdkmanager }}" --licenses || true
+
+      - name: Build APK
+        run: |
+          buildozer -v android debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: bin/*.apk
