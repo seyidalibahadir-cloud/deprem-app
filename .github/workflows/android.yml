@@ -27,7 +27,7 @@ jobs:
         pip install --upgrade pip
         pip install buildozer cython kivy kivymd requests
 
-    - name: Initialize Buildozer
+    - name: Initialize Buildozer and download Android tools
       run: |
         buildozer init || true
         buildozer android update
