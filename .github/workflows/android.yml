@@ -24,6 +24,10 @@ jobs:
         pip install --upgrade pip
         pip install buildozer cython kivy kivymd requests
 
+    - name: Prepare buildozer spec
+      run: |
+        buildozer init || true
+
     - name: Build APK
       run: |
         buildozer -v android debug
