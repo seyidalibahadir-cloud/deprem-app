@@ -1,62 +1,91 @@
-name: Build Android APK
+name: Build Android APK (Pro)
 
 on:
   push:
     branches: [ main ]
+  workflow_dispatch: # Manuel tetikleme özelliği eklendi
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04 # Daha stabil bir ortam sağlar
 
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.10"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-    - name: Install system dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y git zip unzip openjdk-17-jdk \
-          build-essential libffi-dev libssl-dev \
-          libsqlite3-dev libbz2-dev libreadline-dev liblzma-dev \
-          zlib1g-dev libncurses5-dev libncursesw5-dev
+      - name: Setup Java (OpenJDK 17)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-    - name: Install Python tools
-      run: |
-        python -m pip install --upgrade pip
-        pip install buildozer cython kivy kivymd requests
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            python3-dev \
+            ffmpeg \
+            libsdl2-dev \
+            libsdl2-image-dev \
+            libsdl2-mixer-dev \
+            libsdl2-ttf-dev \
+            libportmidi-dev \
+            libswscale-dev \
+            libavformat-dev \
+            libavcodec-dev \
+            zlib1g-dev \
+            libgstreamer1.0-gstreamer-lite1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            zip \
+            unzip \
+            autoconf \
+            libtool \
+            pkg-config \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libffi-dev \
+            libssl-dev \
+            cmake
 
-    - name: Init Buildozer (if needed)
-      run: |
-        if [ ! -f buildozer.spec ]; then
-          buildozer init
-        fi
+      - name: Install Buildozer & Cython
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade "cython<3.0" # Kivy/Buildozer için en stabil sürüm
+          pip install buildozer
 
-    - name: Fix Android SDK + Accept licenses
-      run: |
-        mkdir -p ~/.android
-        touch ~/.android/repositories.cfg || true
+      # PRO İPUCU: Buildozer dosyalarını önbelleğe alarak 15 dakikalık build süresini 5 dakikaya indiririz.
+      - name: Cache Buildozer Global Dir
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
 
-        # Buildozer Android setup
-        buildozer android update || true
+      - name: Build APK (Debug)
+        run: |
+          # SDK lisanslarını otomatik onaylar ve build'e başlar
+          # --color=always logları daha okunabilir kılar
+          # -v ayrıntılı çıktı verir
+          yes | buildozer -v android debug
+        env:
+          # Buildozer'in etkileşimli modda takılmasını önler
+          APP_ANDROID_ACCEPT_SDK_LICENSE: "1"
 
-        # Accept SDK licenses (fix for build-tools errors)
-        SDKMANAGER=$(find ~/.buildozer -name sdkmanager 2>/dev/null | head -n 1)
+      - name: Find and Rename APK
+        run: |
+          # APK dosyasını bul ve temiz bir isim ver
+          mkdir -p output
+          find bin/ -name "*.apk" -exec cp {} output/turkey_earthquake_app.apk \;
 
-        if [ ! -z "$SDKMANAGER" ]; then
-          yes | "$SDKMANAGER" --licenses || true
-        fi
-
-    - name: Build APK
-      run: |
-        buildozer -v android debug
-
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: deprem-app-apk
-        path: bin/*.apk
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turkey-earthquake-apk
+          path: output/turkey_earthquake_app.apk
+          retention-days: 7 # Sunucuda 7 gün saklansın
