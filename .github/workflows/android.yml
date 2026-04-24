@@ -20,13 +20,28 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt update
-        sudo apt install -y git zip unzip openjdk-17-jdk
+        sudo apt install -y git zip unzip openjdk-17-jdk \
+          build-essential libffi-dev libssl-dev \
+          libsqlite3-dev libbz2-dev libreadline-dev liblzma-dev \
+          zlib1g-dev libncurses5-dev libncursesw5-dev
         pip install --upgrade pip
         pip install buildozer cython kivy kivymd requests
 
-    - name: Prepare buildozer spec
+    - name: Initialize Buildozer
       run: |
         buildozer init || true
+        buildozer android update
+
+    - name: Accept Android SDK licenses
+      run: |
+        mkdir -p ~/.android
+        touch ~/.android/repositories.cfg
+        SDKMANAGER=$(find ~/.buildozer/android/platform/android-sdk -name sdkmanager | head -n 1)
+        if [ -z "$SDKMANAGER" ]; then
+          echo "sdkmanager not found"
+          exit 1
+        fi
+        yes | "$SDKMANAGER" --licenses
 
     - name: Build APK
       run: |
