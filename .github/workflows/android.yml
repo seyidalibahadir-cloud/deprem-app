@@ -1,16 +1,20 @@
-name: Build Android APK
+name: Build Android APK (Ultra-Stable)
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
 
+env:
+  # GitHub Actions Node.js uyarılarını susturur ve modernize eder
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
-    runs-on: ubuntu-22.04 # 20.04 yerine 22.04 daha güncel ve stabil
+    runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout repo
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
     - name: Set up Python
@@ -27,9 +31,7 @@ jobs:
     - name: Install System Dependencies
       run: |
         sudo apt-get update
-        # Kırık paketleri düzeltmek ve eksik bağımlılığı (libunwind-dev) zorla yüklemek için:
         sudo apt-get install -y --fix-broken
-        sudo apt-get install -y libunwind-dev
         sudo apt-get install -y \
           build-essential \
           git \
@@ -57,24 +59,42 @@ jobs:
           libncursesw5-dev \
           libffi-dev \
           libssl-dev \
-          cmake
+          libsqlite3-dev \
+          libbz2-dev \
+          libreadline-dev \
+          liblzma-dev \
+          cmake \
+          openjdk-17-jdk \
+          libunwind-dev
 
-    - name: Install Python tools
+    - name: Install Python Tools (The Fixer)
       run: |
         python -m pip install --upgrade pip
-        pip install --upgrade "cython<3.0"
+        # KRİTİK: Setuptools 70+ sürümleri Buildozer'ı bozabiliyor, 66.1.1 en stabilidir.
+        # Cython 3.0+ Kivy ile bazen çatışır, <3.0 zorunludur.
+        pip install "setuptools<70.0.0" "cython<3.0" wheel
         pip install buildozer
+
+    - name: Cache Buildozer Data
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.buildozer
+          .buildozer
+        key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
 
     - name: Build APK
       run: |
-        # Lisansları kabul et ve derlemeyi başlat
+        # SDK Lisanslarını onaylamak için en güvenli yöntem
         export APP_ANDROID_ACCEPT_SDK_LICENSE="1"
+        # Buildozer'ın ağ hatalarına karşı daha dirençli olması için
         buildozer -v android debug
       env:
-        GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+        GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dkotlin.incremental=false"
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: deprem-app-debug
         path: bin/*.apk
+        retention-days: 3
