@@ -1,13 +1,13 @@
-name: Build Android APK (Zırhlı Versiyon)
+name: Build Android APK
 
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # Manuel olarak da başlatabilmen için
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-22.04 # 20.04 yerine 22.04 daha güncel ve stabil
 
     steps:
     - name: Checkout repo
@@ -26,8 +26,11 @@ jobs:
 
     - name: Install System Dependencies
       run: |
-        sudo apt update
-        sudo apt install -y \
+        sudo apt-get update
+        # Kırık paketleri düzeltmek ve eksik bağımlılığı (libunwind-dev) zorla yüklemek için:
+        sudo apt-get install -y --fix-broken
+        sudo apt-get install -y libunwind-dev
+        sudo apt-get install -y \
           build-essential \
           git \
           python3-dev \
@@ -54,33 +57,24 @@ jobs:
           libncursesw5-dev \
           libffi-dev \
           libssl-dev \
-          cmake \
-          openjdk-17-jdk
+          cmake
 
     - name: Install Python tools
       run: |
         python -m pip install --upgrade pip
-        pip install --upgrade "cython<3.0" # Kivy için kritik versiyon
+        pip install --upgrade "cython<3.0"
         pip install buildozer
 
-    - name: Cache Buildozer Data
-      uses: actions/cache@v4
-      with:
-        path: .buildozer
-        key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
-
-    - name: Build APK (Zırhlı Mod)
+    - name: Build APK
       run: |
-        # SDK lisanslarını otomatik onaylamanın en pro yolu budur:
+        # Lisansları kabul et ve derlemeyi başlat
         export APP_ANDROID_ACCEPT_SDK_LICENSE="1"
-        yes | buildozer -v android debug
+        buildozer -v android debug
       env:
-        # Buildozer'ın hata almasını önleyen env flag'leri
         GRADLE_OPTS: "-Dorg.gradle.daemon=false"
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: turkey_earthquake_app
+        name: deprem-app-debug
         path: bin/*.apk
-        retention-days: 5
