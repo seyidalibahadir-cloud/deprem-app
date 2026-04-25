@@ -29,13 +29,17 @@ android.archs = arm64-v8a, armeabi-v7a
 # Gerekli izinler
 android.permissions = INTERNET, ACCESS_NETWORK_STATE
 
-# HTTPS (SSL) hatalarını önlemek için certifi kullanımı zorunludur
-android.meta_data = com.google.android.gms.version=@integer/google_play_services_version
+# ❌ İPTAL EDİLDİ: Uygulamanın açılışta çökmesine sebep olan satır buydu!
+# Google Play Services SDK'sı yüklemediğimiz için kapalı kalmalı.
+# android.meta_data = com.google.android.gms.version=@integer/google_play_services_version
 
 android.private_storage = True
 android.allow_backup = False
 
-# Uygulama ikonu (Eğer icon.png varsa açarsın)
+# ✅ EKLENDİ: KivyMD'nin Android'de modern UI ile çalışması için ZORUNLU satır!
+android.enable_androidx = True
+
+# Uygulama ikonu (Eğer icon.png varsa başındaki # işaretini silersin)
 # icon.filename = icon.png
 
 [python]
