@@ -3,98 +3,250 @@ name: Build Android APK (Ultra-Stable)
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
+# Aynı branch'te gereksiz paralel build'leri iptal eder
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  # GitHub Actions Node.js uyarılarını susturur ve modernize eder
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PYTHON_VERSION: "3.10"
+  JAVA_VERSION: "17"
+  # Cache'i manuel sıfırlamak için bu değeri artır (örn. v2, v3...)
+  CACHE_VERSION: "v1"
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    # Sonsuz takılmaları önlemek için maksimum süre (90 dakika yeterli)
+    timeout-minutes: 90
 
     steps:
+
+    # ─────────────────────────────────────────────
+    # 1. KAYNAK KOD
+    # ─────────────────────────────────────────────
     - name: Checkout Repository
       uses: actions/checkout@v4
 
-    - name: Set up Python
+    # ─────────────────────────────────────────────
+    # 2. ORTAM KURULUMU
+    # ─────────────────────────────────────────────
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
       uses: actions/setup-python@v5
       with:
-        python-version: "3.10"
+        python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Setup Java (OpenJDK 17)
+    - name: Setup Java (OpenJDK ${{ env.JAVA_VERSION }})
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
-        java-version: '17'
+        java-version: ${{ env.JAVA_VERSION }}
 
+    # ─────────────────────────────────────────────
+    # 3. SİSTEM BAĞIMLILIKLARI
+    # ─────────────────────────────────────────────
     - name: Install System Dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y --fix-broken
-        sudo apt-get install -y \
+        sudo apt-get update -qq
+        # --no-install-recommends: Gereksiz paketleri indirme, CI süresi kısalır
+        sudo apt-get install -y --no-install-recommends \
+          autoconf \
+          automake \
           build-essential \
-          git \
-          python3-dev \
+          ccache \
+          cmake \
           ffmpeg \
+          git \
+          gstreamer1.0-plugins-base \
+          gstreamer1.0-plugins-good \
+          libbz2-dev \
+          libffi-dev \
+          libgstreamer-plugins-base1.0-dev \
+          libgstreamer1.0-dev \
+          liblzma-dev \
+          libncurses5-dev \
+          libncursesw5-dev \
+          libportmidi-dev \
+          libreadline-dev \
           libsdl2-dev \
           libsdl2-image-dev \
           libsdl2-mixer-dev \
           libsdl2-ttf-dev \
-          libportmidi-dev \
+          libsqlite3-dev \
+          libssl-dev \
           libswscale-dev \
-          libavformat-dev \
           libavcodec-dev \
-          zlib1g-dev \
-          libgstreamer1.0-dev \
-          gstreamer1.0-plugins-base \
-          gstreamer1.0-plugins-good \
-          libgstreamer-plugins-base1.0-dev \
-          zip \
-          unzip \
-          autoconf \
+          libavformat-dev \
           libtool \
           pkg-config \
-          libncurses5-dev \
-          libncursesw5-dev \
-          libffi-dev \
-          libssl-dev \
-          libsqlite3-dev \
-          libbz2-dev \
-          libreadline-dev \
-          liblzma-dev \
-          cmake \
-          openjdk-17-jdk \
-          libunwind-dev
+          python3-dev \
+          unzip \
+          zip \
+          zlib1g-dev
 
-    - name: Install Python Tools (The Fixer)
-      run: |
-        python -m pip install --upgrade pip
-        # KRİTİK: Setuptools 70+ sürümleri Buildozer'ı bozabiliyor, 66.1.1 en stabilidir.
-        # Cython 3.0+ Kivy ile bazen çatışır, <3.0 zorunludur.
-        pip install "setuptools<70.0.0" "cython<3.0" wheel
-        pip install buildozer
+        # Kurulum doğrulama
+        echo "✓ Java sürümü:"
+        java -version
+        echo "✓ JAVA_HOME: $JAVA_HOME"
 
-    - name: Cache Buildozer Data
+    # ─────────────────────────────────────────────
+    # 4. CACHE KATMANLARI
+    # Her biri ayrı key ile: biri bozulursa diğerleri çalışır
+    # ─────────────────────────────────────────────
+    - name: Cache pip packages
       uses: actions/cache@v4
       with:
-        path: |
-          ~/.buildozer
-          .buildozer
-        key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ env.CACHE_VERSION }}-${{ hashFiles('buildozer.spec') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-${{ env.CACHE_VERSION }}-
+          ${{ runner.os }}-pip-
 
+    - name: Cache Buildozer Global (SDK, NDK, tools)
+      uses: actions/cache@v4
+      with:
+        path: ~/.buildozer
+        key: ${{ runner.os }}-buildozer-global-${{ env.CACHE_VERSION }}-${{ hashFiles('buildozer.spec') }}
+        restore-keys: |
+          ${{ runner.os }}-buildozer-global-${{ env.CACHE_VERSION }}-
+          ${{ runner.os }}-buildozer-global-
+
+    - name: Cache Buildozer Project (build artifacts)
+      uses: actions/cache@v4
+      with:
+        path: .buildozer
+        key: ${{ runner.os }}-buildozer-project-${{ env.CACHE_VERSION }}-${{ hashFiles('buildozer.spec') }}
+        restore-keys: |
+          ${{ runner.os }}-buildozer-project-${{ env.CACHE_VERSION }}-
+          ${{ runner.os }}-buildozer-project-
+
+    # ─────────────────────────────────────────────
+    # 5. PYTHON ARAÇLARI
+    # NEDEN BU VERSİYONLAR?
+    #   setuptools 69.5.1 → 70+ Buildozer'daki pkg_resources kullanımını kırıyor
+    #   cython 0.29.37    → Cython 3.0+ Kivy ile çatışıyor, <3.0 zorunlu
+    #   buildozer 1.5.0   → En kararlı sürüm
+    #   virtualenv        → Buildozer dahili olarak kullanıyor
+    # ─────────────────────────────────────────────
+    - name: Install Python Build Tools
+      run: |
+        python -m pip install --upgrade pip --quiet
+        pip install \
+          "setuptools==69.5.1" \
+          "cython==0.29.37" \
+          "wheel==0.43.0" \
+          "virtualenv==20.26.2" \
+          "buildozer==1.5.0" \
+          --quiet
+
+        echo "=== Kurulu paket sürümleri ==="
+        pip show buildozer cython setuptools virtualenv
+
+    # ─────────────────────────────────────────────
+    # 6. ANDROID SDK LİSANSLARI
+    # Üç farklı yöntemle kabul et: biri başarısız olursa diğerleri devreye girer
+    # ─────────────────────────────────────────────
+    - name: Accept Android SDK Licenses
+      run: |
+        # Yöntem 1: Buildozer'ın okuduğu ortam değişkeni
+        echo "APP_ANDROID_ACCEPT_SDK_LICENSE=y" >> $GITHUB_ENV
+
+        # Yöntem 2: SDK zaten indirilmişse (cache'den geldiyse) doğrudan kabul
+        SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
+        SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+        if [ -f "$SDKMANAGER" ]; then
+          echo "SDK bulundu, lisanslar doğrudan kabul ediliyor..."
+          yes | "$SDKMANAGER" --licenses 2>/dev/null || true
+        fi
+
+        # Yöntem 3: Lisans dosyalarını elle oluştur (en güvenilir yedek)
+        LICENSES_DIR="$SDK_ROOT/licenses"
+        mkdir -p "$LICENSES_DIR"
+        echo "8933bad161af4178b1185d1a37fbf41ea5269c55" >  "$LICENSES_DIR/android-sdk-license"
+        echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> "$LICENSES_DIR/android-sdk-license"
+        echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" >> "$LICENSES_DIR/android-sdk-license"
+        echo "84831b9409646a918e30573bab4c9c91346d8abd" >  "$LICENSES_DIR/android-sdk-preview-license"
+        echo "✓ Lisans dosyaları oluşturuldu"
+
+    # ─────────────────────────────────────────────
+    # 7. APK BUILD
+    # ─────────────────────────────────────────────
     - name: Build APK
       run: |
-        # SDK Lisanslarını onaylamak için en güvenli yöntem
-        export APP_ANDROID_ACCEPT_SDK_LICENSE="1"
-        # Buildozer'ın ağ hatalarına karşı daha dirençli olması için
-        buildozer -v android debug
-      env:
-        GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dkotlin.incremental=false"
+        # Tüm çıktıyı hem ekrana bas hem de log dosyasına kaydet
+        buildozer -v android debug 2>&1 | tee build.log
+        BUILD_EXIT=${PIPESTATUS[0]}
 
-    - name: Upload APK
+        # Hata durumunda açıklayıcı mesaj ver
+        if [ $BUILD_EXIT -ne 0 ]; then
+          echo ""
+          echo "══════════════════════════════════════════"
+          echo "  BUILD BAŞARISIZ — Son 100 satır:"
+          echo "══════════════════════════════════════════"
+          tail -100 build.log
+          exit $BUILD_EXIT
+        fi
+      env:
+        APP_ANDROID_ACCEPT_SDK_LICENSE: y
+        # Gradle daemon kapalı: CI'da bellek tasarrufu + daha stabil
+        # -Xmx2g: Gradle'a 2 GB bellek, OOM hatasını önler
+        GRADLE_OPTS: >-
+          -Dorg.gradle.daemon=false
+          -Dkotlin.incremental=false
+          -Dorg.gradle.jvmargs=-Xmx2g
+          -Dorg.gradle.configureondemand=true
+        # ccache: C derlemelerini cache'ler, tekrar build'i hızlandırır
+        USE_CCACHE: "1"
+
+    # ─────────────────────────────────────────────
+    # 8. BUILD SONUÇLARINI KONTROL ET
+    # always(): başarı veya başarısızlıkta çalışır
+    # ─────────────────────────────────────────────
+    - name: Verify Build Output
+      if: always()
+      run: |
+        echo "=== bin/ klasörü içeriği ==="
+        if [ -d "bin" ]; then
+          ls -lah bin/
+        else
+          echo "HATA: bin/ klasörü bulunamadı!"
+        fi
+
+        echo ""
+        echo "=== Proje genelinde APK arama ==="
+        find . -name "*.apk" 2>/dev/null && echo "APK bulundu." || echo "Hiç APK bulunamadı."
+
+    # ─────────────────────────────────────────────
+    # 9. APK'YI ARTIFACT OLARAK YÜKLE
+    # ─────────────────────────────────────────────
+    - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
+      if: success()
       with:
-        name: deprem-app-debug
+        # run_number ile her build benzersiz isim alır
+        name: deprem-app-debug-${{ github.run_number }}
         path: bin/*.apk
-        retention-days: 3
+        # APK yoksa workflow'u başarısız say
+        if-no-files-found: error
+        retention-days: 7
+
+    # ─────────────────────────────────────────────
+    # 10. HATA DURUMUNDA DEBUG LOGLARINI YÜKLE
+    # Sadece build başarısız olduğunda çalışır
+    # ─────────────────────────────────────────────
+    - name: Upload Build Logs on Failure
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: build-failure-logs-${{ github.run_number }}
+        path: |
+          build.log
+          .buildozer/android/platform/build-*/dists/*/build.log
+          .buildozer/android/platform/build-*/build/outputs/logs/*.log
+        if-no-files-found: warn
+        retention-days: 14
