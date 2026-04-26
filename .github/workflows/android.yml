@@ -14,14 +14,6 @@ concurrency:
 env:
   PYTHON_VERSION: "3.10"
   JAVA_VERSION: "17"
-  CACHE_VERSION: "v2"
-  APP_ANDROID_ACCEPT_SDK_LICENSE: "true"
-  GRADLE_OPTS: >-
-    -Dorg.gradle.daemon=false
-    -Dkotlin.incremental=false
-    -Dorg.gradle.jvmargs=-Xmx2g
-    -Dorg.gradle.configureondemand=true
-  USE_CCACHE: "1"
 
 jobs:
   build:
@@ -47,101 +39,33 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            autoconf \
-            automake \
-            build-essential \
-            ccache \
-            cmake \
-            git \
-            libbz2-dev \
-            libffi-dev \
-            libfreetype6-dev \
-            libgdbm-dev \
-            libjpeg-dev \
-            liblzma-dev \
-            libncurses5-dev \
-            libncursesw5-dev \
-            libopenjp2-7-dev \
-            libportmidi-dev \
-            libreadline-dev \
-            libsdl2-dev \
-            libsdl2-image-dev \
-            libsdl2-mixer-dev \
-            libsdl2-ttf-dev \
-            libsqlite3-dev \
-            libssl-dev \
-            libunwind-dev \
-            libtool \
-            pkg-config \
-            python3-dev \
-            unzip \
-            wget \
-            zip \
-            zlib1g-dev
+            autoconf automake build-essential ccache cmake git \
+            libbz2-dev libffi-dev libfreetype6-dev libgdbm-dev \
+            libjpeg-dev liblzma-dev libncurses5-dev libncursesw5-dev \
+            libopenjp2-7-dev libportmidi-dev libreadline-dev \
+            libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev \
+            libsdl2-ttf-dev libsqlite3-dev libssl-dev libunwind-dev \
+            libtool pkg-config python3-dev unzip wget zip zlib1g-dev
 
-      - name: Cache pip
+      - name: Cache Buildozer ve Pip
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ env.CACHE_VERSION }}-${{ hashFiles('buildozer.spec') }}
+          path: |
+            ~/.cache/pip
+            ~/.buildozer
+            .buildozer
+          key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            ${{ runner.os }}-pip-${{ env.CACHE_VERSION }}-
-            ${{ runner.os }}-pip-
-
-      - name: Cache Buildozer Global
-        uses: actions/cache@v4
-        with:
-          path: ~/.buildozer
-          key: ${{ runner.os }}-buildozer-global-${{ env.CACHE_VERSION }}-${{ hashFiles('buildozer.spec') }}
-          restore-keys: |
-            ${{ runner.os }}-buildozer-global-${{ env.CACHE_VERSION }}-
-            ${{ runner.os }}-buildozer-global-
-
-      - name: Cache Buildozer Project
-        uses: actions/cache@v4
-        with:
-          path: .buildozer
-          key: ${{ runner.os }}-buildozer-project-${{ env.CACHE_VERSION }}-${{ hashFiles('buildozer.spec') }}
-          restore-keys: |
-            ${{ runner.os }}-buildozer-project-${{ env.CACHE_VERSION }}-
-            ${{ runner.os }}-buildozer-project-
+            ${{ runner.os }}-buildozer-
 
       - name: Install Python Build Tools
         run: |
           python -m pip install --upgrade pip --quiet
-          pip install \
-            "setuptools==69.5.1" \
-            "cython==0.29.37" \
-            "wheel==0.43.0" \
-            "virtualenv==20.26.2" \
-            "buildozer==1.5.0" \
-            --quiet
+          pip install "setuptools" "cython==0.29.37" "wheel" "virtualenv" "buildozer" --quiet
 
-      - name: Install Android SDK Components
-        run: |
-          SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
-          mkdir -p "$SDK_ROOT/cmdline-tools"
-
-          cd "$SDK_ROOT"
-
-          if [ ! -d "$SDK_ROOT/cmdline-tools/latest" ]; then
-            wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-            unzip -q commandlinetools-linux-*.zip
-            mv cmdline-tools latest
-            rm -f commandlinetools-linux-*.zip
-          fi
-
-          export ANDROID_HOME="$SDK_ROOT"
-          export ANDROID_SDK_ROOT="$SDK_ROOT"
-          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
-
-          yes | sdkmanager --licenses || true
-          sdkmanager --install \
-            "platform-tools" \
-            "platforms;android-33" \
-            "build-tools;33.0.2" || true
-
-      - name: Accept Android SDK Licenses
+      - name: Pre-accept Android SDK Licenses
+        # Buildozer kendi SDK'sını indirirken lisansta takılmaması için
+        # lisans dosyalarını Buildozer'ın arayacağı dizine önceden oluşturuyoruz.
         run: |
           SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
           LICENSES_DIR="$SDK_ROOT/licenses"
@@ -158,32 +82,9 @@ jobs:
           EOF
 
       - name: Build APK
-        run: |
-          buildozer -v android debug 2>&1 | tee build.log
-          BUILD_EXIT=${PIPESTATUS[0]}
-
-          if [ "$BUILD_EXIT" -ne 0 ]; then
-            echo ""
-            echo "══════════════════════════════════════════"
-            echo "  BUILD BAŞARISIZ — Son 100 satır:"
-            echo "══════════════════════════════════════════"
-            tail -100 build.log
-            exit "$BUILD_EXIT"
-          fi
-
-      - name: Verify Build Output
-        if: always()
-        run: |
-          echo "=== bin/ klasörü içeriği ==="
-          if [ -d "bin" ]; then
-            ls -lah bin/
-          else
-            echo "HATA: bin/ klasörü bulunamadı!"
-          fi
-
-          echo ""
-          echo "=== Proje genelinde APK arama ==="
-          find . -name "*.apk" 2>/dev/null && echo "APK bulundu." || echo "Hiç APK bulunamadı."
+        # 'yes' komutu, Buildozer'ın beklenmedik bir şekilde onay istemesi durumunda
+        # GitHub Actions'ın sonsuza kadar asılı kalmasını (hang) engeller.
+        run: yes | buildozer -v android debug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -200,7 +101,6 @@ jobs:
         with:
           name: build-failure-logs-${{ github.run_number }}
           path: |
-            build.log
             .buildozer/android/platform/build-*/dists/*/build.log
             .buildozer/android/platform/build-*/build/outputs/logs/*.log
           if-no-files-found: warn
