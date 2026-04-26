@@ -1,4 +1,4 @@
-name: Build Android APK (Ultra-Stable Fixed)
+name: Build Android APK (Ultra-Stable)
 
 on:
   push:
@@ -15,6 +15,13 @@ env:
   PYTHON_VERSION: "3.10"
   JAVA_VERSION: "17"
   CACHE_VERSION: "v2"
+  APP_ANDROID_ACCEPT_SDK_LICENSE: "y"
+  GRADLE_OPTS: >-
+    -Dorg.gradle.daemon=false
+    -Dkotlin.incremental=false
+    -Dorg.gradle.jvmargs=-Xmx2g
+    -Dorg.gradle.configureondemand=true
+  USE_CCACHE: "1"
 
 jobs:
   build:
@@ -22,94 +29,179 @@ jobs:
     timeout-minutes: 90
 
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
 
-    - name: Setup Java
-      uses: actions/setup-java@v4
-      with:
-        distribution: temurin
-        java-version: ${{ env.JAVA_VERSION }}
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            autoconf \
+            automake \
+            build-essential \
+            ccache \
+            cmake \
+            git \
+            libbz2-dev \
+            libffi-dev \
+            libfreetype6-dev \
+            libgdbm-dev \
+            libjpeg-dev \
+            liblzma-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libopenjp2-7-dev \
+            libportmidi-dev \
+            libreadline-dev \
+            libsdl2-dev \
+            libsdl2-image-dev \
+            libsdl2-mixer-dev \
+            libsdl2-ttf-dev \
+            libsqlite3-dev \
+            libssl-dev \
+            libunwind-dev \
+            libtool \
+            pkg-config \
+            python3-dev \
+            unzip \
+            wget \
+            zip \
+            zlib1g-dev
 
-    # ✅ Sistem bağımlılıkları
-    - name: Install System Dependencies
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends \
-          build-essential ccache git zip unzip \
-          libffi-dev libssl-dev zlib1g-dev \
-          libncurses5-dev libncursesw5-dev \
-          libreadline-dev libsqlite3-dev libbz2-dev \
-          liblzma-dev libgdbm-dev libnss3-dev \
-          libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-          libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
-          autoconf automake libtool pkg-config cmake
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ env.CACHE_VERSION }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ env.CACHE_VERSION }}-
+            ${{ runner.os }}-pip-
 
-    # ✅ CACHE
-    - name: Cache pip
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ env.CACHE_VERSION }}
+      - name: Cache Buildozer Global
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: ${{ runner.os }}-buildozer-global-${{ env.CACHE_VERSION }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            ${{ runner.os }}-buildozer-global-${{ env.CACHE_VERSION }}-
+            ${{ runner.os }}-buildozer-global-
 
-    - name: Cache buildozer
-      uses: actions/cache@v4
-      with:
-        path: ~/.buildozer
-        key: ${{ runner.os }}-buildozer-${{ env.CACHE_VERSION }}
+      - name: Cache Buildozer Project
+        uses: actions/cache@v4
+        with:
+          path: .buildozer
+          key: ${{ runner.os }}-buildozer-project-${{ env.CACHE_VERSION }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            ${{ runner.os }}-buildozer-project-${{ env.CACHE_VERSION }}-
+            ${{ runner.os }}-buildozer-project-
 
-    # ✅ Python tools
-    - name: Install Buildozer
-      run: |
-        python -m pip install --upgrade pip
-        pip install \
-          "setuptools==69.5.1" \
-          "cython==0.29.37" \
-          "buildozer==1.5.0" \
-          "virtualenv"
+      - name: Install Python Build Tools
+        run: |
+          python -m pip install --upgrade pip --quiet
+          pip install \
+            "setuptools==69.5.1" \
+            "cython==0.29.37" \
+            "wheel==0.43.0" \
+            "virtualenv==20.26.2" \
+            "buildozer==1.5.0" \
+            --quiet
 
-    # 🔥 EN KRİTİK DÜZELTME (SDK + BUILD-TOOLS ZORLA KUR)
-    - name: Install Android SDK Components
-      run: |
-        SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
-        mkdir -p $SDK_ROOT/cmdline-tools
+      - name: Install Android SDK Components
+        run: |
+          SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
+          mkdir -p "$SDK_ROOT/cmdline-tools"
 
-        cd $SDK_ROOT
+          cd "$SDK_ROOT"
 
-        echo "Downloading cmdline-tools..."
-        wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-        unzip -q commandlinetools-linux-*.zip
-        mv cmdline-tools latest
-        rm commandlinetools-linux-*.zip
+          if [ ! -d "$SDK_ROOT/cmdline-tools/latest" ]; then
+            wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            unzip -q commandlinetools-linux-*.zip
+            mv cmdline-tools latest
+            rm -f commandlinetools-linux-*.zip
+          fi
 
-        export ANDROID_HOME=$SDK_ROOT
-        export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+          export ANDROID_HOME="$SDK_ROOT"
+          export ANDROID_SDK_ROOT="$SDK_ROOT"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
 
-        yes | sdkmanager --licenses
+          yes | sdkmanager --licenses || true
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;33.0.2" || true
 
-        echo "Installing SDK packages..."
-        sdkmanager \
-          "platform-tools" \
-          "platforms;android-33" \
-          "build-tools;33.0.2"
+      - name: Accept Android SDK Licenses
+        run: |
+          SDK_ROOT="$HOME/.buildozer/android/platform/android-sdk"
+          LICENSES_DIR="$SDK_ROOT/licenses"
+          mkdir -p "$LICENSES_DIR"
 
-    # ✅ BUILD
-    - name: Build APK
-      run: |
-        buildozer android debug
-      env:
-        APP_ANDROID_ACCEPT_SDK_LICENSE: y
-        GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx2g"
+          cat > "$LICENSES_DIR/android-sdk-license" <<'EOF'
+          8933bad161af4178b1185d1a37fbf41ea5269c55
+          d56f5187479451eabf01fb78af6dfcb131a6481e
+          24333f8a63b6825ea9c5514f83c2829b004d1fee
+          EOF
 
-    # ✅ APK yükle
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: apk-${{ github.run_number }}
-        path: bin/*.apk
+          cat > "$LICENSES_DIR/android-sdk-preview-license" <<'EOF'
+          84831b9409646a918e30573bab4c9c91346d8abd
+          EOF
+
+      - name: Build APK
+        run: |
+          buildozer -v android debug 2>&1 | tee build.log
+          BUILD_EXIT=${PIPESTATUS[0]}
+
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo ""
+            echo "══════════════════════════════════════════"
+            echo "  BUILD BAŞARISIZ — Son 100 satır:"
+            echo "══════════════════════════════════════════"
+            tail -100 build.log
+            exit "$BUILD_EXIT"
+          fi
+
+      - name: Verify Build Output
+        if: always()
+        run: |
+          echo "=== bin/ klasörü içeriği ==="
+          if [ -d "bin" ]; then
+            ls -lah bin/
+          else
+            echo "HATA: bin/ klasörü bulunamadı!"
+          fi
+
+          echo ""
+          echo "=== Proje genelinde APK arama ==="
+          find . -name "*.apk" 2>/dev/null && echo "APK bulundu." || echo "Hiç APK bulunamadı."
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: deprem-app-debug-${{ github.run_number }}
+          path: bin/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Build Logs on Failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-failure-logs-${{ github.run_number }}
+          path: |
+            build.log
+            .buildozer/android/platform/build-*/dists/*/build.log
+            .buildozer/android/platform/build-*/build/outputs/logs/*.log
+          if-no-files-found: warn
+          retention-days: 14
